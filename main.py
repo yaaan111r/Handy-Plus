@@ -1,53 +1,47 @@
+import os
+import google.generativeai as genai
 from fastapi import FastAPI, Form, Response
 from twilio.twiml.messaging_response import MessagingResponse
 
 app = FastAPI()
 
+# טעינת המפתח ממשתני הסביבה ב-Render
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# הגדרת חיבור ל-Gemini API
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+# הגדרת המודל וההנחיות (System Prompt) עבור "הנדי פלוס"
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash",
+    system_instruction=(
+        "אתה עוזר וירטואלי חכם, אדיב ומקצועי עבור 'הנדי פלוס' - עסק לתיקונים, אינסטלציה וחשמל. "
+        "תפקידך לענות ללקוחות ב-WhatsApp בערבית או בעברית (לפי שפת הפנייה של הלקוח), "
+        "לספק מענה קצר, ברור וענייני, ולסייע בהבנת التקלה או באיסוף הפרטים (שם, כתובת ותיאור הבעיה)."
+    )
+)
+
 @app.get("/")
 def home():
-    return {"status": "HandyPlus Bot is running!"}
+    return {"status": "Handy Plus WhatsApp Bot is running!"}
 
 @app.post("/whatsapp")
-async def whatsapp_reply(Body: str = Form('')):
-    incoming_msg = Body.strip().lower()
-    resp = MessagingResponse()
-    msg = resp.message()
+async def whatsapp_webhook(Body: str = Form(...)):
+    try:
+        if not GEMINI_API_KEY:
+            bot_reply = "שלום! הגעת להנדי פלוס. המערכת בשידרוג קל, נחזור אליך בהקדם."
+        else:
+            # פנייה למודל Gemini לקבלת תשובה חכמה
+            response = model.generate_content(Body)
+            bot_reply = response.text.strip()
+            
+    except Exception as e:
+        print(f"Error generating AI response: {e}")
+        bot_reply = "תודה שפנית להנדי פלוס! נציג יחזור אליך בהקדם."
 
-    if incoming_msg == '1':
-        reply = (
-            "🔧 *התקנות ותלייה*\n"
-            "תליית טלוויזיות, מדפים, מראות, תמונות, וילונות ומסילות.\n\n"
-            "אנא שלח/י תמונה של האזור המיועד לתלייה או פרט/י מה נדרש לתלות."
-        )
-    elif incoming_msg == '2':
-        reply = (
-            "🚰 *אינסטלציה*\n"
-            "החלפת ברזים, סיפונים, תיקון נזילות ואיטום סיליקון.\n\n"
-            "אנא צרף/י תמונה של הברז/האזור הדולף לתיאור מדויק."
-        )
-    elif incoming_msg == '3':
-        reply = (
-            "🔨 *הרכבות ותיקונים*\n"
-            "הרכבת רהיטים, כיוון דלתות וצירים, תיקוני שפכטל וצבע.\n\n"
-            "מה הרהיט או התיקון הנדרש? ניתן לצרף תמונה."
-        )
-    elif incoming_msg == '4':
-        reply = (
-            "💡 *חשמל ותאורה*\n"
-            "החלפת שקעים ומתגים, התקנת גופי תאורה ומאווררי תקרה.\n\n"
-            "פרט/י מה נדרש להתקין או לתקן."
-        )
-    else:
-        reply = (
-            "שלום! הגעתם ל-*הנדי פלוס* 🛠️\n"
-            "*דיוק הנדסי בעבודות הבית*\n\n"
-            "באיזה תחום מדובר?\n"
-            "1️⃣ התקנות ותלייה (טלוויזיות, מדפים, וילונות)\n"
-            "2️⃣ אינסטלציה (ברזים, נזילות, סיליקון)\n"
-            "3️⃣ הרכבות ותיקונים (רהיטים, דלתות, שפכטל)\n"
-            "4️⃣ חשמל ותאורה (גופי תאורה, שקעים)\n\n"
-            "_השב/י עם המספר הרצוי או תאר/י את התקלה בצצירוף תמונה._"
-        )
-
-    msg.body(reply)
-    return Response(content=str(resp), media_type="application/xml")
+    # החזרת התשובה בפורמט TwiML ל-WhatsApp
+    twiml = MessagingResponse()
+    twiml.message(bot_reply)
+    
+    return Response(content=str(twiml), media_type="application/xml")
