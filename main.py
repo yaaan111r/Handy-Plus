@@ -1,5 +1,5 @@
 import os
-from google import genai
+import google.genai as genai
 from fastapi import FastAPI, Form, Response
 from twilio.twiml.messaging_response import MessagingResponse
 
@@ -19,9 +19,9 @@ async def whatsapp_webhook(Body: str = Form(...)):
         if not client:
             bot_reply = "שלום! הגעת להנדי פלוס. המערכת בשידרוג קל, נחזור אליך בהקדם."
         else:
-            # קריאה למודל Flash המתקדם
+            # קריאה למודל Flash הנתמך
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-1.5-flash',
                 contents=Body,
                 config={
                     'system_instruction': (
