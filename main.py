@@ -9,7 +9,7 @@ app = FastAPI()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# זיכרון שיחות לפי מספר טלפון
+# זיכרון שיחות בזיכרון השרת
 chat_sessions = {}
 
 PRICE_LIST = """
@@ -48,7 +48,7 @@ PRICE_LIST = """
 דלתות:
 - כיוון דלת/החלפת ידית: 180-250 ₪
 
-איננו מבצעים: החלפת אסלות/מונובלוק, נקודות מים חדשות.
+איננו מבצעים: החלפת אסלות/מונובלוק, נקודות מים חדשות, תיקון מזגנים.
 """
 
 SYSTEM_PROMPT = f"""
@@ -58,15 +58,25 @@ SYSTEM_PROMPT = f"""
 חוקי ברזל נוקשים:
 1. הודעה קצרה בלבד! מקסימום 1-2 משפטים.
 2. תברך "שלום" רק בהודעה הראשונה בשיחה. לאחר מכן - אל תגיד "שלום" יותר לעולם!
-3. **איסור חזרה על שאלות:** אם הלקוח לא שלח תמונה, לא פירט מיקום, או דילג על פרט – **חורט ואסור לבקש פעם נוספת!** תתקדם מיד לשלב הבא.
-4. זרימה חצי-אוטומטית ומהירה:
-   - הודעה 1: תיאור קצר של השירות שצריך + אפשר להזכיר תמונה בקטנה.
-   - הודעה 2: שאל "מה הכתובת ומה הדחיפות?" (רק פעם אחת!).
-   - הודעה 3: תן מחיר משוער מהמחירון + סייג: "(עבודה בלבד, מחיר סופי במקום)" + ציין ליצור קשר במספר 055-9821845.
+3. **אם הלקוח מבקש עבודה שאיננו מבצעים** (כמו תיקון מזגן, החלפת אסלה): ענה מיד: "אנחנו לא מבצעים עבודה זו, לבירורים ניתן לחייג 055-9821845".
+4. **איסור חזרה על שאלות:** אם הלקוח לא שלח תמונה או מיקום, התקדם מיד לשלב הבא!
+5. זרימה:
+   - שלב 1: שאל על תיאור התקלה.
+   - שלב 2: שאל כתובת ודחיפות.
+   - שלב 3: תן מחיר משוער מהמחירון (עבודה בלבד) + הפניה למספר 055-9821845.
 
 מחירון:
 {PRICE_LIST}
 """
+
+def get_or_create_chat(user_id: str):
+    """יוצר או משחזר סשן צ'אט בטוח"""
+    if user_id not in chat_sessions:
+        chat_sessions[user_id] = client.chats.create(
+            model='gemini-3.1-flash-lite',
+            config={'system_instruction': SYSTEM_PROMPT}
+        )
+    return chat_sessions[user_id]
 
 @app.get("/")
 def home():
@@ -76,31 +86,42 @@ def home():
 async def whatsapp_webhook(From: str = Form(default=""), Body: str = Form(default="")):
     twiml = MessagingResponse()
     user_msg = Body.strip() if Body else ""
-    user_id = From.strip()
+    user_id = From.strip() if From else "default_user"
 
     if not user_msg:
         twiml.message("שלום! הגעת להנדי פלוס. במה נוכל לעזור?")
         return Response(content=str(twiml), media_type="application/xml")
 
     if not client:
-        twiml.message("הערות התקבלו! ליצירת קשר מהיר: 055-9821845")
+        twiml.message("שלום! ליצירת קשר עם הנדי פלוס חייג: 055-9821845")
         return Response(content=str(twiml), media_type="application/xml")
 
+    bot_reply = None
+
+    # ניסיון ראשון לשלוח הודעה דרך הסשן הקיים
     try:
-        if user_id not in chat_sessions:
+        chat = get_or_create_chat(user_id)
+        response = chat.send_message(user_msg)
+        if response and response.text:
+            bot_reply = response.text.strip()
+    except Exception as e:
+        print(f"Chat Session error for {user_id}, resetting session: {e}")
+        # אם הסשן נשבר, מאפסים אותו ומנסים שוב
+        try:
             chat_sessions[user_id] = client.chats.create(
-                model='Gemini 3.1 Flash-Lite',
+                model='gemini-3.1-flash-lite',
                 config={'system_instruction': SYSTEM_PROMPT}
             )
+            response = chat_sessions[user_id].send_message(user_msg)
+            if response and response.text:
+                bot_reply = response.text.strip()
+        except Exception as inner_e:
+            print(f"Critical Gemini API Error: {inner_e}")
+            traceback.print_exc()
 
-        chat = chat_sessions[user_id]
-        response = chat.send_message(user_msg)
-        bot_reply = response.text.strip() if response and response.text else "קיבלנו. ליצירת קשר: 055-9821845"
-
-    except Exception as e:
-        print("=== ERROR IN WHATSAPP WEBHOOK ===")
-        traceback.print_exc()
-        bot_reply = "תודה! לקבלת מענה מהיר חייג: 055-9821845"
+    # אם גם אחרי האיפוס Gemini לא החזיר תשובה
+    if not bot_reply:
+        bot_reply = "במה נוכל לעזור בתחום התיקונים? לפרטים נוספים ניתן גם לחייג 055-9821845."
 
     twiml.message(bot_reply)
     return Response(content=str(twiml), media_type="application/xml")
