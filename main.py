@@ -21,7 +21,7 @@ async def whatsapp_webhook(Body: str = Form(...)):
         else:
             # קריאה למודל ה-Flash העדכני ביותר
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.6-flash',
                 contents=Body,
                 config={
                     'system_instruction': (
