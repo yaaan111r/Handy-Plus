@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]
 twilio
-google-generativeai
+google-genai
 python-multipart
