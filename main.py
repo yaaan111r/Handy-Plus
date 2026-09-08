@@ -89,7 +89,7 @@ async def whatsapp_webhook(From: str = Form(default=""), Body: str = Form(defaul
     try:
         if user_id not in chat_sessions:
             chat_sessions[user_id] = client.chats.create(
-                model='gemini-3.6-flash',
+                model='Gemini 3.1 Flash-Lite',
                 config={'system_instruction': SYSTEM_PROMPT}
             )
 
