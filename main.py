@@ -1,11 +1,11 @@
 import os
-import google.genai as genai
+from google import genai
 from fastapi import FastAPI, Form, Response
 from twilio.twiml.messaging_response import MessagingResponse
 
 app = FastAPI()
 
-# טעינת חיבור ל-Gemini API באמצעות ה-SDK החדש
+# התחברות ל-Gemini API באמצעות ה-SDK החדש
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
@@ -19,9 +19,9 @@ async def whatsapp_webhook(Body: str = Form(...)):
         if not client:
             bot_reply = "שלום! הגעת להנדי פלוס. המערכת בשידרוג קל, נחזור אליך בהקדם."
         else:
-            # קריאה למודל Flash הנתמך
+            # קריאה למודל ה-Flash העדכני ביותר
             response = client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash',
                 contents=Body,
                 config={
                     'system_instruction': (
