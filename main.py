@@ -2,6 +2,7 @@ import os
 import traceback
 import requests
 from google import genai
+from google.genai import types
 from fastapi import FastAPI, Form, Response
 from twilio.twiml.messaging_response import MessagingResponse
 
@@ -17,7 +18,6 @@ TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# זיכרון שיחות בזיכרון השרת
 chat_sessions = {}
 
 PRICE_LIST = """
@@ -80,7 +80,6 @@ SYSTEM_PROMPT = f"""
 """
 
 def get_or_create_chat(user_id: str):
-    """יוצר או משחזר סשן צ'אט בטוח"""
     if user_id not in chat_sessions:
         chat_sessions[user_id] = client.chats.create(
             model='gemini-3.1-flash-lite',
@@ -89,7 +88,6 @@ def get_or_create_chat(user_id: str):
     return chat_sessions[user_id]
 
 def fetch_image_from_twilio(media_url: str) -> bytes | None:
-    """מורידה את קובץ המדיה משרתי Twilio בעזרת Basic Auth"""
     try:
         auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN else None
         res = requests.get(media_url, auth=auth, timeout=10)
@@ -119,23 +117,21 @@ async def whatsapp_webhook(
         twiml.message("שלום! ליצירת קשר עם הנדי פלוס חייג: 055-9821845")
         return Response(content=str(twiml), media_type="application/xml")
 
-    # בניית הרשימה שתישלח ל-Gemini (יכולה להכיל טקסט, תמונה או שניהם)
     contents = []
 
-    # אם נשלחה תמונה מ-Twilio
     if NumMedia > 0 and MediaUrl0:
         image_bytes = fetch_image_from_twilio(MediaUrl0)
         if image_bytes:
             mime_type = ContentType0 if ContentType0 else "image/jpeg"
-            contents.append({
-                "mime_type": mime_type,
-                "data": image_bytes
-            })
+            image_part = types.Part.from_bytes(
+                data=image_bytes,
+                mime_type=mime_type
+            )
+            contents.append(image_part)
 
     if user_msg:
         contents.append(user_msg)
 
-    # מקרה קצה: לא הגיע טקסט ולא הצלחנו לחלץ תמונה
     if not contents:
         twiml.message("שלום! הגעת להנדי פלוס. במה נוכל לעזור?")
         return Response(content=str(twiml), media_type="application/xml")
@@ -143,7 +139,6 @@ async def whatsapp_webhook(
     bot_reply = None
     payload = contents if len(contents) > 1 else contents[0]
 
-    # ניסיון ראשון לשלוח הודעה דרך הסשן הקיים
     try:
         chat = get_or_create_chat(user_id)
         response = chat.send_message(payload)
@@ -151,7 +146,6 @@ async def whatsapp_webhook(
             bot_reply = response.text.strip()
     except Exception as e:
         print(f"Chat Session error for {user_id}, resetting session: {e}")
-        # אם הסשן נשבר, מאפסים אותו ומנסים שוב
         try:
             chat_sessions[user_id] = client.chats.create(
                 model='gemini-3.1-flash-lite',
@@ -164,7 +158,6 @@ async def whatsapp_webhook(
             print(f"Critical Gemini API Error: {inner_e}")
             traceback.print_exc()
 
-    # אם גם אחרי האיפוס Gemini לא החזיר תשובה
     if not bot_reply:
         bot_reply = "במה נוכל לעזור בתחום התיקונים? לפרטים נוספים ניתן גם לחייג 055-9821845."
 
