@@ -1,14 +1,20 @@
 import os
 import traceback
+import requests
 from google import genai
 from fastapi import FastAPI, Form, Response
 from twilio.twiml.messaging_response import MessagingResponse
 
 app = FastAPI()
+
 @app.get("/ping")
 def ping():
     return "ok"
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # זיכרון שיחות בזיכרון השרת
@@ -60,12 +66,14 @@ SYSTEM_PROMPT = f"""
 חוקי ברזל נוקשים:
 1. הודעה קצרה בלבד! מקסימום 1-2 משפטים.
 2. תברך "שלום" רק בהודעה הראשונה בשיחה. לאחר מכן - אל תגיד "שלום" יותר לעולם, אלא אם אמרו שלום כלפייך!
-3. **אם הלקוח מבקש עבודה שאיננו מבצעים** (כמו תיקון מזגן, החלפת אסלה): ענה מיד: "אנחנו לא מבצעים עבודה זו, לבירורים ניתן לחייג 055-9821845".
-4. **איסור חזרה על שאלות:** אם הלקוח לא שלח תמונה או מיקום, התקדם מיד לשלב הבא!
-5. זרימה:
-   - שלב 1: שאל על תיאור התקלה כולל בקשה לתמונה שמתארת את המצב - פנה בצורה נעימה וחברית.
-   - שלב 2: שאל לגבי כתובת מדויקת ודחיפות במיידי או גמיש.
-   - שלב 3: תן מחיר משוער מהמחירון (עבודה בלבד) + הפניה למספר 055-9821845.
+3. **ניתוח תמונות ואישור מהמשתמש:**
+   - ברגע שמתקבלת תמונה, נתח אותה מיד.
+   - שאל את הלקוח בדיוק בנוסח הבא: "אני רואה בתמונה [תיאור הבעיה]. האם נדרש לבצע [תיאור השירות המבוקש המדויק מהמחירון]?"
+4. **זרימת השיחה:**
+   - אם המשתמש מאשר (תשובה חיובית כמו "כן", "נכון", "בדיוק"): התקדם מיד לשלב של שאלת כתובת מדויקת ודחיפות.
+   - אם המשתמש משיב בשלילה (או אומר שלא לזה התכוון): פנה בצורה נעימה ובקש ממנו לחדד מה הטיפול הדרוש.
+5. **עבודות שאיננו מבצעים** (כמו תיקון מזגן, החלפת אסלה, נקודת מים): ענה מיד: "אנחנו לא מבצעים עבודה זו, לבירורים ניתן לחייג 055-9821845".
+6. **מתן הצעת מחיר:** לאחר אישור השירות והגדרת הכתובת/הדחיפות - תן מחיר משוער מהמחירון (עבודה בלבד) + הפניה למספר 055-9821845.
 
 מחירון:
 {PRICE_LIST}
@@ -80,30 +88,65 @@ def get_or_create_chat(user_id: str):
         )
     return chat_sessions[user_id]
 
+def fetch_image_from_twilio(media_url: str) -> bytes | None:
+    """מורידה את קובץ המדיה משרתי Twilio בעזרת Basic Auth"""
+    try:
+        auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN else None
+        res = requests.get(media_url, auth=auth, timeout=10)
+        if res.status_code == 200:
+            return res.content
+    except Exception as e:
+        print(f"Failed to download image from Twilio: {e}")
+    return None
+
 @app.get("/")
 def home():
     return {"status": "Handy Plus Fast Bot is running!"}
 
 @app.post("/whatsapp")
-async def whatsapp_webhook(From: str = Form(default=""), Body: str = Form(default="")):
+async def whatsapp_webhook(
+    From: str = Form(default=""),
+    Body: str = Form(default=""),
+    NumMedia: int = Form(default=0),
+    MediaUrl0: str = Form(default=""),
+    ContentType0: str = Form(default="")
+):
     twiml = MessagingResponse()
     user_msg = Body.strip() if Body else ""
     user_id = From.strip() if From else "default_user"
-
-    if not user_msg:
-        twiml.message("שלום! הגעת להנדי פלוס. במה נוכל לעזור?")
-        return Response(content=str(twiml), media_type="application/xml")
 
     if not client:
         twiml.message("שלום! ליצירת קשר עם הנדי פלוס חייג: 055-9821845")
         return Response(content=str(twiml), media_type="application/xml")
 
+    # בניית הרשימה שתישלח ל-Gemini (יכולה להכיל טקסט, תמונה או שניהם)
+    contents = []
+
+    # אם נשלחה תמונה מ-Twilio
+    if NumMedia > 0 and MediaUrl0:
+        image_bytes = fetch_image_from_twilio(MediaUrl0)
+        if image_bytes:
+            mime_type = ContentType0 if ContentType0 else "image/jpeg"
+            contents.append({
+                "mime_type": mime_type,
+                "data": image_bytes
+            })
+
+    if user_msg:
+        contents.append(user_msg)
+
+    # מקרה קצה: לא הגיע טקסט ולא הצלחנו לחלץ תמונה
+    if not contents:
+        twiml.message("שלום! הגעת להנדי פלוס. במה נוכל לעזור?")
+        return Response(content=str(twiml), media_type="application/xml")
+
     bot_reply = None
+    payload = contents if len(contents) > 1 else contents[0]
 
     # ניסיון ראשון לשלוח הודעה דרך הסשן הקיים
     try:
         chat = get_or_create_chat(user_id)
-        response = chat.send_message(user_msg)
+        response = chat.send_message(payload)
         if response and response.text:
             bot_reply = response.text.strip()
     except Exception as e:
@@ -114,7 +157,7 @@ async def whatsapp_webhook(From: str = Form(default=""), Body: str = Form(defaul
                 model='gemini-3.1-flash-lite',
                 config={'system_instruction': SYSTEM_PROMPT}
             )
-            response = chat_sessions[user_id].send_message(user_msg)
+            response = chat_sessions[user_id].send_message(payload)
             if response and response.text:
                 bot_reply = response.text.strip()
         except Exception as inner_e:
