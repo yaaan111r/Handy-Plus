@@ -5,7 +5,9 @@ from fastapi import FastAPI, Form, Response
 from twilio.twiml.messaging_response import MessagingResponse
 
 app = FastAPI()
-
+@app.get("/ping")
+def ping():
+    return "ok"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
