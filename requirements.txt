@@ -3,3 +3,4 @@ uvicorn[standard]
 twilio
 google-genai
 python-multipart
+requests
